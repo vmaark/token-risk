@@ -34,7 +34,21 @@ Adapters currently inspect:
 
 Interface cross-checks do not authenticate a deployment or prove safety. Verified source is accepted only when Sourcify's on-chain runtime bytecode matches the pinned RPC bytecode hash. Other proxies, custom code, complete role histories, canonical bridges, Curve, NFT holdings, synthetic collateral and off-chain reserves need further adapters. An unmatched contract is unclassified, not assumed to be a base asset.
 
-Live results receive no numerical or editorial risk score. The graph distinguishes backing, bridge authority, governance, market and network dependencies. Every observed incoming mint/release path stays relevant regardless of a holder's acquisition route. Complete authority coverage is always marked partial. Contract-reported balances and accounting are not a cross-chain solvency proof; in-flight messages and liabilities are not reconciled.
+Live results include Exposure Units v1, a count of observed system/risk dimensions. Severity and loss probability remain unassessed. The graph distinguishes backing, bridge authority, governance, market and network dependencies. Every observed incoming mint/release path stays relevant regardless of a holder's acquisition route. Complete authority coverage is always marked partial. Contract-reported balances and accounting are not a cross-chain solvency proof; in-flight messages and liabilities are not reconciled.
+
+## Exposure Units v1 and chart
+
+Both live and curated graphs use a shared, browser-side assessment model. One exposure unit (EU) is one unique system × risk dimension, with equal weight 1. It counts the discovered risk surface, not expected loss, loss probability, or a safety ranking. It applies no economic-value weights, quorum discounts, incident penalties or 0–100 normalization.
+
+The seven chart groups are network/cryptography, code, privileged controls, bridge verification, staking/restaking, markets/oracles and issuer/reserves. Distinct dimensions within a group each count once per system. The source module lists every mapping and inference rule. Live code points require an observed bytecode hash; privileged addresses and incoming bridge paths contribute observed dimensions. Contract-reported signer/DVN quorums remain evidence, with no automatic point discount. Detailed synthetic/off-chain backing is not inferred.
+
+Shared dependencies count once across branches. Known Lido staking and Circle reserve facts have explicit shared identities to avoid duplicate accounting across their wrapper/reserve nodes. Each receiving bridge path is a separate message-verification boundary; an additionally accepted grace library adds a boundary. This does not treat paths or verifiers as statistically independent.
+
+Stacked columns show cumulative exposure from base dependencies to the token; Added per layer shows the incremental contribution. Side controls enter at their earliest dependent stage. Cyclic backing components are condensed into one stage. Stages describe structural composition, not transfer history. Click a column to inspect the added systems, then select a system to open its inspector. Node badges and JSON exports include the same assessment and formula version.
+
+Hatched caps indicate unquantified unknowns, with decorative height excluded from numeric totals. Evidence checks count only displayed checklist items; the fraction is not global risk-assessment completeness. A smaller discovered count can result from less adapter coverage. Curated labels remain explicitly marked editorial judgments and do not determine EU.
+
+For the curated examples: native ETH = 2 EU; stETH = 7; wstETH = 8; the partial canonical Arbitrum wstETH scenario = 12. These are convention-based structural counts, not empirical risk estimates or directly comparable to live snapshots with different scope.
 
 ## Caching and limits
 
@@ -54,6 +68,8 @@ Curated qualitative labels use the maximum ordinal label among reachable modeled
 - `discovery/engine.js`: recursive graph and protocol adapters, source bytecode checks, bridge configurations.
 - `discovery/cache.js`: IndexedDB and result-cache policy.
 - `discovery/lz-catalog.json`: versioned LayerZero endpoint catalog with source/date.
+- `web/exposure.js`: versioned EU counting rules, shared-system deduplication, SCC stages and limited evidence checks.
+- `web/exposure-view.js`: stacked columns, per-stage inspection, node contributions and accessible data table.
 - `web/live.js`: live dashboard, progress/cancellation, dependency inspector, cache controls and evidence export.
 - `web/model.js`, `web/app.js`: curated graph model and shared application shell.
 - `tests/`: graph invariants, adapter cross-checks, reciprocal escrow, ULN decoding, cache expiry/refresh/stale behavior, bytecode matching and chain/block validation.
