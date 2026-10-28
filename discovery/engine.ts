@@ -1,0 +1,1124 @@
+import type { Abi, Hex } from "viem";
+import type {
+  CacheStore,
+  ContractCall,
+  DiscoveryNode,
+  DiscoveryEdge,
+  DiscoveryResult,
+  Endpoint,
+  ReadClient,
+  ReadResult,
+  SourceMetadata,
+  TokenInput,
+  UlnConfig,
+  BridgePath,
+  GracePolicy,
+  Peer,
+} from "./types.ts";
+type ContractNode = DiscoveryNode & { address: string; chainId: number };
+interface DiscoveryOptions {
+  session?: ReadClient;
+  fetcher?: typeof fetch;
+  signal?: AbortSignal;
+  cache?: CacheStore;
+  onProgress?: (message: string) => void;
+  maxNodes?: number;
+  maxDepth?: number;
+  catalog?: Endpoint[];
+}
+import { decodeAbiParameters, formatUnits, stringToHex, keccak256 } from "viem";
+import {
+  ReadSession,
+  CHAINS,
+  ZERO,
+  nodeId,
+  lower,
+  isAddress,
+  hashCode,
+  IMPLEMENTATION_SLOT,
+  ADMIN_SLOT,
+  BEACON_SLOT,
+  slotAddress,
+  boundedJson,
+  DiscoveryError,
+  errorCode,
+  errorMessage,
+} from "./rpc.ts";
+import catalog from "./lz-catalog.json" with { type: "json" };
+import { METADATA_TTL } from "./cache.ts";
+export const RSETH = "0xa1290d69c65a6fe4df752f95823fae25cb99e5a7";
+export const LIVE_EXAMPLES = [
+  {
+    label: "rsETH · Arbitrum",
+    chainId: 42161,
+    address: "0x4186BFC76E2E237523CBC30FD220FE055156b41F",
+  },
+  {
+    label: "sDAI vault",
+    chainId: 1,
+    address: "0x83F20F44975D03b1b09e64809B757c47f942BEeA",
+  },
+  {
+    label: "UNI V2 · USDC / ETH",
+    chainId: 1,
+    address: "0xB4e16d0168e52d35CaCD2c6185b44281Ec28C9Dc",
+  },
+  {
+    label: "Aave aWETH",
+    chainId: 1,
+    address: "0x4d5F47FA6A74757f35C14fD3a6Ef8E3C9BC514E8",
+  },
+];
+const WSTETH = "0x7f39c581f595b53c5cb19bd0b3f8da6c935e2ca0";
+const STETH = "0xae7ab96520de3a18e5e111b5eaab095312d7fe84";
+const WETH: Record<number, string> = {
+  1: "0xc02aaa39b223fe8d0a0e5c4f27ead9083c756cc2",
+  42161: "0x82af49447d8a07e3bd95bd0d56f35241523fbab1",
+  8453: "0x4200000000000000000000000000000000000006",
+  10: "0x4200000000000000000000000000000000000006",
+};
+const good = <T = unknown>(r: ReadResult | undefined): T | undefined =>
+  r?.ok ? (r.value as T) : undefined;
+const addr = (r: ReadResult | undefined) => {
+  const value = good(r);
+  return isAddress(value) && lower(value) !== ZERO ? lower(value) : null;
+};
+const safe = <T>(v: T): T =>
+  JSON.parse(
+    JSON.stringify(v, (_, x) => (typeof x === "bigint" ? x.toString() : x)),
+  );
+export function decodeUln(bytes: Hex): UlnConfig | null {
+  try {
+    const [c] = decodeAbiParameters(
+      [
+        {
+          type: "tuple",
+          components: [
+            { name: "confirmations", type: "uint64" },
+            { name: "requiredDVNCount", type: "uint8" },
+            { name: "optionalDVNCount", type: "uint8" },
+            { name: "optionalDVNThreshold", type: "uint8" },
+            { name: "requiredDVNs", type: "address[]" },
+            { name: "optionalDVNs", type: "address[]" },
+          ],
+        },
+      ],
+      bytes,
+    );
+    return {
+      ...c,
+      confirmations: String(c.confirmations),
+      requiredDVNs: [...c.requiredDVNs],
+      optionalDVNs: [...c.optionalDVNs],
+    };
+  } catch {
+    return null;
+  }
+}
+export function peerAddress(bytes: string) {
+  return /^0x0{24}[a-fA-F0-9]{40}$/.test(bytes) && !/^0x0+$/.test(bytes)
+    ? "0x" + bytes.slice(-40)
+    : null;
+}
+export async function verifiedMetadata(
+  session: ReadClient,
+  chainId: number,
+  address: string,
+  code: Hex,
+  cache?: CacheStore,
+): Promise<SourceMetadata> {
+  const codeHash = hashCode(code),
+    key = `abi:${chainId}:${lower(address)}:${codeHash}`;
+  const hit = await cache?.get<SourceMetadata>(key);
+  if (hit) return hit.value;
+  try {
+    const response = await session.fetcher(
+      `https://sourcify.dev/server/v2/contract/${chainId}/${address}?fields=abi,compilation,runtimeMatch,runtimeBytecode`,
+      {
+        signal: AbortSignal.any([
+          AbortSignal.timeout(4000),
+          ...(session.signal ? [session.signal] : []),
+        ]),
+      },
+    );
+    const data = await boundedJson<{
+      runtimeMatch?: string;
+      runtimeBytecode?: { onchainBytecode?: Hex };
+      compilation?: { name?: string };
+      abi?: Abi;
+    }>(response);
+    const matches =
+      !!data.runtimeMatch &&
+      data.runtimeBytecode?.onchainBytecode &&
+      hashCode(data.runtimeBytecode.onchainBytecode) === codeHash;
+    if (!matches)
+      return {
+        verified: false,
+        codeHash,
+        reason: "Source bytecode did not match the pinned on-chain code.",
+      };
+    const result = {
+      verified: true,
+      codeHash,
+      name: data.compilation?.name || "Verified contract",
+      abi: data.abi || [],
+      url: `https://repo.sourcify.dev/${chainId}/${address}`,
+    };
+    await cache?.set(key, result, METADATA_TTL);
+    return result;
+  } catch {
+    return {
+      verified: false,
+      codeHash,
+      reason:
+        "Verified source unavailable; interface responses alone do not establish identity.",
+    };
+  }
+}
+export class Discovery {
+  session: ReadClient;
+  cache?: CacheStore;
+  progress: (message: string) => void;
+  nodes: DiscoveryNode[];
+  edges: DiscoveryEdge[];
+  visited: Map<string, ContractNode>;
+  maxNodes: number;
+  maxDepth: number;
+  warnings: string[];
+  interrupted: boolean;
+  catalog: Endpoint[];
+  constructor(options: DiscoveryOptions = {}) {
+    this.session =
+      options.session ||
+      new ReadSession({}, options.fetcher || fetch, {
+        signal: options.signal,
+        maxCalls: 1400,
+        timeoutMs: 90000,
+      });
+    this.cache = options.cache;
+    this.progress = options.onProgress || (() => {});
+    this.nodes = [];
+    this.edges = [];
+    this.visited = new Map();
+    this.maxNodes = options.maxNodes || 32;
+    this.maxDepth = options.maxDepth ?? 4;
+    this.warnings = [];
+    this.interrupted = false;
+    this.catalog = options.catalog || catalog.endpoints;
+  }
+  edge(
+    from: string,
+    to: string,
+    kind: string,
+    label: string,
+    extra: Partial<DiscoveryEdge> = {},
+  ) {
+    if (from === to) return;
+    if (
+      !this.edges.some((e) => e.from === from && e.to === to && e.kind === kind)
+    )
+      this.edges.push({ from, to, kind, label, ...safe(extra) });
+  }
+  pseudo(
+    id: string,
+    name: string,
+    type: string,
+    chainId: number,
+    extra: Partial<DiscoveryNode> = {},
+  ) {
+    let n = this.nodes.find((n) => n.id === id);
+    if (!n) {
+      n = {
+        id,
+        name,
+        symbol: name,
+        type,
+        chainId,
+        observations: [],
+        unknowns: [],
+        ...extra,
+      };
+      this.nodes.push(n);
+    }
+    return n;
+  }
+  async reads(chain: number, address: string, signatures: string[]) {
+    return this.session.batch(
+      chain,
+      signatures.map((signature) => ({ address, signature })),
+    );
+  }
+  async child(
+    parent: DiscoveryNode,
+    chain: number,
+    address: string | null,
+    depth: number,
+    kind = "backing",
+    label = "Underlying asset",
+    extra: Partial<DiscoveryEdge> = {},
+  ) {
+    if (!address || lower(address) === ZERO) return;
+    const id = nodeId(chain, address);
+    this.edge(parent.id, id, kind, label, extra);
+    await this.visit(chain, address, depth + 1);
+  }
+  network(n: { id: string; chainId: number }) {
+    const chain = CHAINS[n.chainId],
+      id = `network:${n.chainId}`;
+    const unknowns =
+      chain.kind === "L2"
+        ? [
+            "Proof / data availability, sequencer, upgrades and canonical bridge controls are not fully discovered.",
+          ]
+        : chain.kind === "Sidechain"
+          ? [
+              "Validator, checkpoint, staking and bridge controls are not fully discovered.",
+            ]
+          : [
+              "Validator concentration, consensus controls and client diversity are not measured.",
+            ];
+    this.pseudo(id, chain.name, "Network security", n.chainId, {
+      observations: [
+        "Consensus, cryptography, client software and network liveness.",
+      ],
+      unknowns,
+    });
+    this.edge(n.id, id, "network", "Network dependency");
+    if (chain.parentId) this.network({ id, chainId: chain.parentId });
+  }
+  async visit(
+    chainId: number,
+    address: string,
+    depth = 0,
+  ): Promise<ContractNode> {
+    address = lower(address);
+    const id = nodeId(chainId, address);
+    if (this.visited.has(id)) return this.visited.get(id)!;
+    const node: ContractNode = {
+      id,
+      chainId,
+      address,
+      name: address.slice(0, 8) + "…" + address.slice(-4),
+      symbol: "Contract",
+      type: "Unclassified contract",
+      observations: [],
+      unknowns: [
+        "Complete mint, burn, release, role and upgrade authority enumeration requires additional source analysis and event history.",
+      ],
+    };
+    this.visited.set(id, node);
+    this.nodes.push(node);
+    this.network(node);
+    if (depth > this.maxDepth || this.visited.size > this.maxNodes) {
+      node.unknowns.push(
+        "Recursion limit reached; this dependency was not inspected.",
+      );
+      return node;
+    }
+    this.progress(
+      `Reading ${CHAINS[chainId].name} · ${address.slice(0, 8)}… (${this.visited.size} contracts)`,
+    );
+    try {
+      const code = await this.session.code(chainId, address);
+      if (code === "0x") {
+        node.type = "Address without contract code";
+        node.unknowns.push("No deployed contract at the pinned block.");
+        return node;
+      }
+      const [implementationSlot, adminSlot, beaconSlot] = await Promise.all(
+        ([IMPLEMENTATION_SLOT, ADMIN_SLOT, BEACON_SLOT] as const).map((slot) =>
+          this.session.storage(chainId, address, slot),
+        ),
+      );
+      let implementation = slotAddress(implementationSlot);
+      const admin = slotAddress(adminSlot),
+        beacon = slotAddress(beaconSlot);
+      if (beacon && !implementation) {
+        implementation = addr(
+          await this.session.read(
+            chainId,
+            beacon,
+            "function implementation() view returns (address)",
+          ),
+        );
+        node.beacon = beacon;
+      }
+      node.codeHash = hashCode(code);
+      if (implementation) node.implementation = implementation;
+      if (admin) await this.authority(node, admin, "Proxy admin");
+      if (beacon) await this.authority(node, beacon, "Upgrade beacon");
+      const sourceAddress = implementation || address;
+      const sourceCode = implementation
+        ? await this.session.code(chainId, implementation)
+        : code;
+      node.source = await verifiedMetadata(
+        this.session,
+        chainId,
+        sourceAddress,
+        sourceCode,
+        this.cache,
+      );
+      node.source.address = sourceAddress;
+      const r = await this.reads(chainId, address, [
+        "function symbol() view returns (string)",
+        "function name() view returns (string)",
+        "function decimals() view returns (uint8)",
+        "function totalSupply() view returns (uint256)",
+        "function asset() view returns (address)",
+        "function totalAssets() view returns (uint256)",
+        "function token0() view returns (address)",
+        "function token1() view returns (address)",
+        "function factory() view returns (address)",
+        "function UNDERLYING_ASSET_ADDRESS() view returns (address)",
+        "function POOL() view returns (address)",
+        "function underlying() view returns (address)",
+        "function comptroller() view returns (address)",
+        "function endpoint() view returns (address)",
+        "function token() view returns (address)",
+        "function owner() view returns (address)",
+        "function minter() view returns (address)",
+        "function getVault() view returns (address)",
+        "function getPoolId() view returns (bytes32)",
+      ]);
+      node.symbol = String(good(r[0]) || node.name).slice(0, 80);
+      node.name = String(good(r[1]) || node.symbol).slice(0, 160);
+      node.decimals = good(r[2]) === undefined ? undefined : Number(good(r[2]));
+      node.totalSupply = good(r[3])?.toString();
+      if (node.totalSupply !== undefined) node.type = "ERC-20 token";
+      if (addr(r[15])) await this.authority(node, addr(r[15]), "Owner");
+      if (addr(r[16])) {
+        await this.authority(node, addr(r[16]), "Minter");
+        node.unknowns.push(
+          "Synthetic or issuer-backed asset: a minter does not reveal collateral, custody or hedging positions. Off-chain backing is not inferred.",
+        );
+      }
+      if (addr(r[13]) && addr(r[14]))
+        await this.oft(node, addr(r[13]), addr(r[14]), depth);
+      else if (chainId === 1 && address === RSETH) await this.kelp(node, depth);
+      else if (chainId === 1 && address === WSTETH) {
+        const underlying = addr(
+          await this.session.read(
+            chainId,
+            address,
+            "function stETH() view returns (address)",
+          ),
+        );
+        if (underlying === STETH) {
+          node.type = "Lido wrapped staking token";
+          await this.child(node, 1, underlying, depth);
+        }
+      } else if (chainId === 1 && address === STETH) {
+        node.type = "Liquid staked ETH";
+        const n = this.pseudo(
+          "staking:lido",
+          "Ethereum staking through Lido",
+          "Staking system",
+          1,
+          {
+            observations: [
+              "ETH staking is the economic backing; token balances do not enumerate validators.",
+            ],
+            unknowns: [
+              "Operator distribution, slashing exposure, oracle quorum and governance controls require further adapters.",
+            ],
+          },
+        );
+        this.edge(node.id, n.id, "backing", "Staked ETH");
+      } else if (address === WETH[chainId]) {
+        node.type = "Wrapped native ETH";
+        this.edge(
+          node.id,
+          `network:${chainId}`,
+          "backing",
+          "Native ETH custody in wrapper",
+        );
+        node.unknowns.push(
+          "Native ETH balance and redemption code require further reconciliation.",
+        );
+      } else if (addr(r[9]) && addr(r[10]))
+        await this.aave(node, addr(r[9]), addr(r[10]), depth);
+      else if (addr(r[6]) && addr(r[7]) && addr(r[8]))
+        await this.pair(node, addr(r[6]), addr(r[7]), addr(r[8]), depth);
+      else if (addr(r[17]) && good(r[18]))
+        await this.balancer(node, addr(r[17]), good(r[18]), depth);
+      else if (addr(r[4]) && good(r[5]) !== undefined)
+        await this.vault(node, addr(r[4]), good(r[5]), depth);
+      else if (addr(r[11]) && addr(r[12]))
+        await this.compound(node, addr(r[11]), addr(r[12]), depth);
+      else {
+        node.unknowns.push(
+          "No supported backing adapter matched. This does not establish that the token is a base asset or has no bridge exposure.",
+        );
+      }
+      if (node.implementation && !admin && !beacon)
+        node.unknowns.push(
+          "Implementation slot detected. UUPS or other upgrade authorization was not resolved.",
+        );
+    } catch (error) {
+      if (errorCode(error) === "ABORTED" || this.session.signal?.aborted)
+        throw new DiscoveryError("ABORTED", "Lookup cancelled.");
+      node.unknowns.push(errorMessage(error));
+      this.interrupted = true;
+    }
+    return node;
+  }
+  async authority(node: DiscoveryNode, address: string | null, label: string) {
+    if (!address || node.chainId === undefined) return;
+    const id = `control:${node.chainId}:${address}`;
+    const n = this.pseudo(
+      id,
+      label,
+      "Governance / privileged control",
+      node.chainId,
+      {
+        address,
+        observations: [],
+        unknowns: [
+          "Module, guard, fallback-handler, timelock and role controls may add other paths.",
+        ],
+      },
+    );
+    this.edge(node.id, id, "governance", label);
+    if (n.inspected) return;
+    n.inspected = true;
+    if (
+      this.nodes.filter((x) => x.type === "Governance / privileged control")
+        .length > 16
+    ) {
+      n.unknowns.push("Privileged-control traversal limit reached.");
+      return;
+    }
+    try {
+      const [owners, threshold, owner, delay] = await this.reads(
+        node.chainId,
+        address,
+        [
+          "function getOwners() view returns (address[])",
+          "function getThreshold() view returns (uint256)",
+          "function owner() view returns (address)",
+          "function getMinDelay() view returns (uint256)",
+        ],
+      );
+      if (good(delay) !== undefined)
+        n.observations.push(
+          `Timelock interface reports a minimum delay of ${String(good(delay))} seconds; bypass and emergency paths remain unassessed.`,
+        );
+      if (addr(owner) && addr(owner) !== address)
+        await this.authority(n, addr(owner), "Control owner");
+      if (good(owners) && good(threshold) !== undefined) {
+        n.owners = good<string[]>(owners);
+        n.threshold = String(good(threshold));
+        n.observations.push(
+          `Multisig interface: ${n.threshold} of ${n.owners!.length} owners. Interface result, not full control analysis.`,
+        );
+      } else
+        n.observations.push(
+          "Address observed on-chain; signer configuration could not be established.",
+        );
+    } catch {
+      n.unknowns.push("Control reads unavailable.");
+    }
+  }
+  async vault(
+    n: ContractNode,
+    asset: string | null,
+    totalAssets: unknown,
+    depth: number,
+  ) {
+    if (!asset) return;
+    const r = await this.session.read(
+      n.chainId,
+      n.address,
+      "function convertToAssets(uint256) view returns (uint256)",
+      [10n ** BigInt(Math.min(n.decimals ?? 18, 36))],
+    );
+    if (!r.ok) {
+      n.unknowns.push(
+        "asset() found but ERC-4626 conversion failed; backing not confirmed.",
+      );
+      return;
+    }
+    n.type = "ERC-4626 vault";
+    n.adapter = "erc4626";
+    n.totalAssets = String(totalAssets);
+    n.observations.push(
+      "Share conversion and immediate underlying read from the vault. Reported totalAssets is not proof of liquid reserves.",
+    );
+    n.unknowns.push(
+      "Strategy allocations, idle balances, withdrawal queues and debt losses are not fully enumerated.",
+    );
+    await this.child(
+      n,
+      n.chainId,
+      asset,
+      depth,
+      "backing",
+      "Vault underlying",
+      { amount: String(totalAssets), basis: "Vault-reported totalAssets" },
+    );
+    const [morpho, yearn] = await this.reads(n.chainId, n.address, [
+      "function MORPHO() view returns (address)",
+      "function get_default_queue() view returns (address[])",
+    ]);
+    if (addr(morpho)) {
+      n.observations.push(
+        "Morpho interface detected. Market allocations, collateral, oracle and IRM dependencies need deeper inspection.",
+      );
+      n.unknowns.push(
+        "Morpho supply/withdraw queues alone may miss residual allocations.",
+      );
+    }
+    if (good(yearn)) {
+      n.strategyQueue = good<string[]>(yearn);
+      n.observations.push(
+        `${n.strategyQueue!.length} Yearn-style default queue entries reported.`,
+      );
+      n.unknowns.push(
+        "Default queue is not an exhaustive inventory of funded strategies.",
+      );
+    }
+  }
+  async pair(
+    n: ContractNode,
+    t0: string | null,
+    t1: string | null,
+    factory: string | null,
+    depth: number,
+  ) {
+    if (!t0 || !t1 || !factory) return;
+    const [reserves, registered] = await Promise.all([
+      this.session.read<bigint[]>(
+        n.chainId,
+        n.address,
+        "function getReserves() view returns (uint112,uint112,uint32)",
+      ),
+      this.session.read(
+        n.chainId,
+        factory,
+        "function getPair(address,address) view returns (address)",
+        [t0, t1],
+      ),
+    ]);
+    if (reserves.ok && addr(registered) === n.address) {
+      n.type = "V2-style LP token";
+      n.adapter = "uniswap-v2";
+      n.factory = factory;
+      n.observations.push(
+        "Factory getPair points back to this pair. Factory authenticity and implementation safety require separate review.",
+      );
+      for (const [i, t] of [t0, t1].entries())
+        await this.child(
+          n,
+          n.chainId,
+          t,
+          depth,
+          "backing",
+          `Pool reserve ${i + 1}`,
+          {
+            amount: String(reserves.value[i]),
+            basis: "getReserves · units of underlying, not value weights",
+          },
+        );
+    } else {
+      const [fee, registeredPool] = await Promise.all([
+        this.session.read(
+          n.chainId,
+          n.address,
+          "function fee() view returns (uint24)",
+        ),
+        this.session.read(
+          n.chainId,
+          factory,
+          "function getPool(address,address,uint24) view returns (address)",
+          [
+            t0,
+            t1,
+            good(
+              await this.session.read(
+                n.chainId,
+                n.address,
+                "function fee() view returns (uint24)",
+              ),
+            ) || 0,
+          ],
+        ),
+      ]);
+      if (fee.ok && addr(registeredPool) === n.address) {
+        n.type = "Concentrated liquidity pool";
+        n.adapter = "uniswap-v3-pool";
+        n.unknowns.push(
+          "A pool address is not an LP position. Position NFT contract and token ID are required to resolve a specific holding.",
+        );
+        await this.child(n, n.chainId, t0, depth, "market", "Pool asset 0");
+        await this.child(n, n.chainId, t1, depth, "market", "Pool asset 1");
+      } else
+        n.unknowns.push(
+          "Pool interface could not be cross-checked against its reported factory.",
+        );
+    }
+  }
+  async aave(
+    n: ContractNode,
+    underlying: string | null,
+    pool: string | null,
+    depth: number,
+  ) {
+    if (!underlying || !pool) return;
+    const reserve = await this.session.read<string[]>(
+      n.chainId,
+      pool,
+      "function getReserveData(address) view returns (uint256,uint128,uint128,uint128,uint128,uint128,uint40,uint16,address,address,address,address,uint128,uint128,uint128)",
+      [underlying],
+    );
+    if (!reserve.ok || lower(reserve.value[8]) !== n.address) {
+      n.unknowns.push(
+        "Aave-style interface found, but the reserve registration could not be verified for this Pool version.",
+      );
+      return;
+    }
+    n.type = "Aave-style deposit token";
+    n.adapter = "aave-v3";
+    n.pool = pool;
+    n.observations.push(
+      "Pool reserve aTokenAddress matches this contract. This cross-check does not authenticate the Pool deployment.",
+    );
+    n.unknowns.push(
+      "Borrower collateral, liquidation, oracle, reserve configuration and liquidity coverage require deeper Pool adapters.",
+    );
+    await this.child(
+      n,
+      n.chainId,
+      underlying,
+      depth,
+      "backing",
+      "Lending reserve underlying",
+    );
+  }
+  async compound(
+    n: ContractNode,
+    underlying: string | null,
+    controller: string | null,
+    depth: number,
+  ) {
+    if (!underlying || !controller) return;
+    const [listed, cash, borrow, reserve] = await this.session.batch<unknown[]>(
+      n.chainId,
+      [
+        {
+          address: controller,
+          signature:
+            "function markets(address) view returns (bool,uint256,bool)",
+          args: [n.address],
+        },
+        ...[
+          "function getCash() view returns (uint256)",
+          "function totalBorrows() view returns (uint256)",
+          "function totalReserves() view returns (uint256)",
+        ].map((signature) => ({ address: n.address, signature })),
+      ],
+    );
+    if (!listed.ok || !listed.value[0]) {
+      n.unknowns.push(
+        "Compound-style token was not confirmed as listed by its controller.",
+      );
+      return;
+    }
+    n.type = "Compound-style lending token";
+    n.adapter = "compound-v2";
+    n.observations.push(
+      `Reported cash ${good(cash)}, borrows ${good(borrow)}, reserves ${good(reserve)} (raw underlying units).`,
+    );
+    n.unknowns.push(
+      "Stored accounting is not a solvency assessment. Market collateral, oracle and controller controls require further discovery.",
+    );
+    await this.child(n, n.chainId, underlying, depth);
+  }
+  async balancer(
+    n: ContractNode,
+    vault: string | null,
+    poolId: unknown,
+    depth: number,
+  ) {
+    if (!vault) return;
+    const [pool, tokens] = await this.session.batch<unknown[]>(n.chainId, [
+      {
+        address: vault,
+        signature: "function getPool(bytes32) view returns (address,uint8)",
+        args: [poolId],
+      },
+      {
+        address: vault,
+        signature:
+          "function getPoolTokens(bytes32) view returns (address[],uint256[],uint256)",
+        args: [poolId],
+      },
+    ]);
+    if (!pool.ok || lower(String(pool.value[0])) !== n.address || !tokens.ok) {
+      n.unknowns.push("Balancer-style pool registration failed.");
+      return;
+    }
+    n.type = "Balancer V2-style pool";
+    n.adapter = "balancer-v2";
+    n.observations.push(
+      "Vault registration points back to this pool; self-held BPT is excluded from backing.",
+    );
+    n.unknowns.push(
+      "Vault authenticity, rate providers, weights and actual BPT supply require further inspection.",
+    );
+    for (const [i, t] of (tokens.value[0] as string[]).slice(0, 12).entries())
+      if (lower(t) !== n.address)
+        await this.child(
+          n,
+          n.chainId,
+          t,
+          depth,
+          "backing",
+          "Vault pool balance",
+          {
+            amount: String((tokens.value[1] as bigint[])[i]),
+            basis: "getPoolTokens · not portfolio value weight",
+          },
+        );
+  }
+  async kelp(n: ContractNode, depth: number) {
+    const config = addr(
+      await this.session.read(
+        1,
+        n.address,
+        "function lrtConfig() view returns (address)",
+      ),
+    );
+    if (!config) {
+      n.unknowns.push("Kelp config unavailable.");
+      return;
+    }
+    const [token, pool] = await this.session.batch(1, [
+      { address: config, signature: "function rsETH() view returns (address)" },
+      {
+        address: config,
+        signature: "function getContract(bytes32) view returns (address)",
+        args: [keccak256(stringToHex("LRT_DEPOSIT_POOL"))],
+      },
+    ]);
+    if (addr(token) !== n.address || !addr(pool)) {
+      n.unknowns.push("Kelp config did not cross-reference this rsETH token.");
+      return;
+    }
+    const poolAddress = addr(pool)!;
+    const [poolConfig, assets] = await Promise.all([
+      this.session.read(
+        1,
+        poolAddress,
+        "function lrtConfig() view returns (address)",
+      ),
+      this.session.read<string[]>(
+        1,
+        config,
+        "function getSupportedAssetList() view returns (address[])",
+      ),
+    ]);
+    if (addr(poolConfig) !== config || !assets.ok) return;
+    n.type = "Kelp liquid restaking token";
+    n.adapter = "kelp";
+    n.config = config;
+    n.depositPool = poolAddress;
+    n.unknowns.push(
+      "Deposit accounting does not enumerate EigenLayer operators, AVSs, slashing, withdrawals or all minters. Mainnet staking backing and remote bridge escrow are separate accounting boundaries.",
+    );
+    const amounts = await this.session.batch<bigint>(
+      1,
+      assets.value
+        .slice(0, 12)
+        .map((address) => ({
+          address: poolAddress,
+          signature:
+            "function getTotalAssetDeposits(address) view returns (uint256)",
+          args: [address],
+        })),
+    );
+    for (const [i, a] of assets.value.slice(0, 12).entries()) {
+      if (!amounts[i].ok) {
+        n.unknowns.push(`Backing accounting unavailable for ${a}.`);
+        continue;
+      }
+      if (amounts[i].value === 0n) continue;
+      if (lower(a) === "0xeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee") {
+        const id = "staking:kelp:eth";
+        this.pseudo(id, "ETH in Kelp accounting", "Staking / custody", 1, {
+          observations: [
+            `Reported deposits: ${formatUnits(amounts[i].value, 18)} ETH`,
+          ],
+          unknowns: [
+            "Operator, withdrawal and slashing breakdown not resolved.",
+          ],
+        });
+        this.edge(n.id, id, "backing", "Protocol-reported ETH deposits", {
+          amount: String(amounts[i].value),
+        });
+      } else
+        await this.child(
+          n,
+          1,
+          a,
+          depth,
+          "backing",
+          "Protocol-reported deposits",
+          {
+            amount: String(amounts[i].value),
+            basis: "getTotalAssetDeposits; not portfolio value weight",
+          },
+        );
+    }
+  }
+  async oft(
+    n: ContractNode,
+    endpoint: string | null,
+    token: string | null,
+    depth: number,
+  ) {
+    if (!endpoint || !token) return;
+    n.type =
+      token === n.address ? "LayerZero OFT" : "LayerZero OFT adapter / escrow";
+    n.adapter = "layerzero-v2";
+    n.endpoint = endpoint;
+    n.observations.push(
+      "Cross-chain exposure belongs to the fungible token and shared escrow, independent of how a holder acquired it.",
+    );
+    n.unknowns.push(
+      `Peer scan covers ${this.catalog.length} known mainnet V2 endpoint IDs (catalog ${catalog.asOf}). Arbitrary IDs, historic messages, custom minters and non-LayerZero routes are not exhaustively enumerated.`,
+    );
+    const replies = await this.session.batch<string>(
+      n.chainId,
+      this.catalog.map((e) => ({
+        address: n.address,
+        signature: "function peers(uint32) view returns (bytes32)",
+        args: [e.eid],
+      })),
+    );
+    const peers = this.catalog.flatMap((e, i) =>
+      replies[i].ok && !/^0x0+$/.test(replies[i].value)
+        ? [
+            {
+              ...e,
+              peer: replies[i].value,
+              peerAddress: peerAddress(replies[i].value),
+            },
+          ]
+        : [],
+    );
+    n.peers = peers;
+    n.failedPeerReads = replies.filter((r) => !r.ok).length;
+    if (n.failedPeerReads)
+      n.unknowns.push(
+        `${n.failedPeerReads} peer reads failed; absence of a route could not be established.`,
+      );
+    if (peers.length) await this.bridgeControls(n, endpoint, peers);
+    if (token !== n.address) {
+      const balance = await this.session.read(
+        n.chainId,
+        token,
+        "function balanceOf(address) view returns (uint256)",
+        [n.address],
+      );
+      await this.child(
+        n,
+        n.chainId,
+        token,
+        depth,
+        "backing",
+        "Token locked by adapter",
+        {
+          amount: good(balance)?.toString(),
+          basis: "Escrow balance; not proof of cross-chain solvency",
+        },
+      );
+    } else if (n.chainId !== 1 && CHAINS[n.chainId].eid) {
+      const ethereumPeer = peers.find((p) => p.eid === 30101 && p.peerAddress);
+      if (ethereumPeer) {
+        const remoteToken = addr(
+          await this.session.read(
+            1,
+            ethereumPeer.peerAddress!,
+            "function token() view returns (address)",
+          ),
+        );
+        const backPeer = good<string>(
+          await this.session.read(
+            1,
+            ethereumPeer.peerAddress!,
+            "function peers(uint32) view returns (bytes32)",
+            [CHAINS[n.chainId].eid],
+          ),
+        );
+        if (
+          remoteToken &&
+          remoteToken !== lower(ethereumPeer.peerAddress!) &&
+          peerAddress(backPeer || "")?.toLowerCase() === n.address
+        ) {
+          await this.child(
+            n,
+            1,
+            ethereumPeer.peerAddress!,
+            depth,
+            "backing",
+            "Reciprocal Ethereum adapter / shared escrow",
+          );
+        } else
+          n.unknowns.push(
+            "Ethereum peer did not establish a reciprocal lock/release adapter. No backing edge was inferred.",
+          );
+      } else
+        n.unknowns.push(
+          "No Ethereum escrow peer found; burn/mint or other-chain backing needs another adapter.",
+        );
+    }
+  }
+  async bridgeControls(n: ContractNode, endpoint: string, peers: Peer[]) {
+    const calls = peers.flatMap((p) => [
+      {
+        address: endpoint,
+        signature:
+          "function getReceiveLibrary(address,uint32) view returns (address,bool)",
+        args: [n.address, p.eid],
+      },
+      {
+        address: endpoint,
+        signature:
+          "function receiveLibraryTimeout(address,uint32) view returns (address,uint256)",
+        args: [n.address, p.eid],
+      },
+      {
+        address: endpoint,
+        signature:
+          "function defaultReceiveLibraryTimeout(uint32) view returns (address,uint256)",
+        args: [p.eid],
+      },
+    ]);
+    const results = await this.session.batch(n.chainId, calls);
+    const blockNumber = (await this.session.snapshot(n.chainId)).number;
+    const paths: BridgePath[] = [];
+    peers.forEach((p, i) => {
+      const lib = good<[string, boolean]>(results[i * 3]);
+      const path: BridgePath = {
+        sourceEid: p.eid,
+        source: p.name,
+        peer: p.peer,
+        peerAddress: p.peerAddress,
+        receiveLibrary: lib?.[0],
+        usesDefault: lib?.[1],
+        config: null,
+        grace: [],
+      };
+      if (lib) {
+        const j = lib[1] ? 2 : 1;
+        const t = good<[string, bigint]>(results[i * 3 + j]);
+        if (t && t[1] > BigInt(blockNumber) && lower(t[0]) !== ZERO)
+          path.grace.push({
+            library: t[0],
+            expiresAtBlock: String(t[1]),
+            scope: lib[1] ? "default" : "application",
+          });
+      }
+      paths.push(path);
+    });
+    const configs: {
+      path: BridgePath;
+      library: string;
+      grace?: GracePolicy;
+    }[] = [];
+    for (const path of paths) {
+      if (path.receiveLibrary && lower(path.receiveLibrary) !== ZERO)
+        configs.push({ path, library: path.receiveLibrary });
+      for (const g of path.grace)
+        configs.push({ path, library: g.library, grace: g });
+    }
+    const responses = await this.session.batch<Hex>(
+      n.chainId,
+      configs.map((x) => ({
+        address: endpoint,
+        signature:
+          "function getConfig(address,address,uint32,uint32) view returns (bytes)",
+        args: [n.address, x.library, x.path.sourceEid, 2],
+      })),
+    );
+    configs.forEach((x, i) => {
+      const config = responses[i].ok ? decodeUln(responses[i].value) : null;
+      if (x.grace) x.grace.config = config;
+      else x.path.config = config;
+    });
+    const id = `bridge:${n.id}`;
+    const control = this.pseudo(
+      id,
+      "Inbound message / release paths",
+      "Bridge authorization",
+      n.chainId,
+      {
+        address: endpoint,
+        paths,
+        observations: [
+          `${paths.length} configured incoming peers. Each path is assessed at the receiving contract, including active receive-library grace periods.`,
+        ],
+        unknowns: [
+          "ULN configuration is decoded only where compatible. Custom libraries, DVN ownership/upgrade paths, delegates, message inspectors, rate limits and full transit accounting remain unassessed.",
+        ],
+      },
+    );
+    this.edge(
+      n.id,
+      id,
+      "authority",
+      n.type.includes("escrow")
+        ? "Can authorize release from shared escrow"
+        : "Can authorize delivery / local supply",
+    );
+    control.unresolved = paths.filter((p) => !p.config).length;
+    if (control.unresolved)
+      control.unknowns.push(
+        `${control.unresolved} current receive configurations unavailable or unsupported.`,
+      );
+  }
+  async run({ chainId, address }: TokenInput): Promise<DiscoveryResult> {
+    if (!CHAINS[chainId] || !isAddress(address))
+      throw new DiscoveryError(
+        "INVALID_INPUT",
+        "Choose a supported network and a valid 20-byte EVM address.",
+        400,
+      );
+    await this.session.snapshot(chainId);
+    await this.visit(Number(chainId), address);
+    if (this.session.signal?.aborted)
+      throw new DiscoveryError("ABORTED", "Lookup cancelled.");
+    return safe({
+      schemaVersion: 3,
+      mode: "browser-live-discovery",
+      generatedAt: new Date().toISOString(),
+      input: { chainId, address },
+      root: nodeId(chainId, address),
+      nodes: this.nodes,
+      edges: this.edges,
+      snapshots: await this.session.states(),
+      reads: this.session.reads,
+      coverage: {
+        status: "partial",
+        interrupted: this.interrupted,
+        authority:
+          "partial; no claim of complete minter or backing-release enumeration",
+        maxDepth: this.maxDepth,
+        maxContracts: this.maxNodes,
+        rpcReads: this.session.calls,
+      },
+      warnings: [
+        "Public RPC and source metadata providers see lookup requests. No wallet connection or API key is required.",
+        "Cross-chain blocks are pinned independently, not an atomic global snapshot. Pending bridge messages and liabilities are not reconciled.",
+        "No numerical risk score is assigned to live results; detection is not a security audit.",
+      ],
+      catalog: {
+        source: catalog.source,
+        asOf: catalog.asOf,
+        endpointCount: this.catalog.length,
+      },
+    });
+  }
+}
+export const discover = (input: TokenInput, options: DiscoveryOptions = {}) =>
+  new Discovery(options).run(input);

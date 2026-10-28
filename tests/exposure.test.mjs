@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { assessExposure, curatedGraph, CATEGORIES } from '../web/exposure.js';
+import { assessExposure, curatedGraph, CATEGORIES } from '../web/exposure.ts';
 import { nodes, scenarios, collect, exposureEdges } from './fixtures/curated-model.js';
 const curated=id=>{const s=scenarios.find(s=>s.id===id);return assessExposure(curatedGraph(s,collect(s),exposureEdges(s)));};
 const n=(id,type,extra={})=>({id,type,name:id,symbol:id,unknowns:[],...extra});

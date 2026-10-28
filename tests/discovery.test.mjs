@@ -1,9 +1,9 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { encodeAbiParameters } from 'viem';
-import { Discovery, decodeUln, peerAddress, verifiedMetadata } from '../discovery/engine.js';
-import { ReadSession, ZERO, nodeId } from '../discovery/rpc.js';
-import { cachedDiscovery, RESULT_TTL, resultKey } from '../discovery/cache.js';
+import { Discovery, decodeUln, peerAddress, verifiedMetadata } from '../discovery/engine.ts';
+import { ReadSession, ZERO, nodeId } from '../discovery/rpc.ts';
+import { cachedDiscovery, RESULT_TTL, resultKey } from '../discovery/cache.ts';
 const A='0x1111111111111111111111111111111111111111', B='0x2222222222222222222222222222222222222222', C='0x3333333333333333333333333333333333333333', D='0x4444444444444444444444444444444444444444', E='0x5555555555555555555555555555555555555555';
 const peer=a=>'0x'+'0'.repeat(24)+a.slice(2);
 const ok=value=>({ok:true,value}),fail={ok:false,error:{code:'REVERT'}};

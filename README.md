@@ -1,18 +1,18 @@
 # Token Risk
 
-A browser-only EVM token dependency explorer. Every analysis starts from a chain ID and contract address, reads pinned on-chain state, and computes its graph and exposure units from those observations. No precomputed token results or editorial risk ratings ship in the app.
+A browser-only EVM token dependency explorer built with React and strict TypeScript. Development and production builds use Vite; dependencies and CI use pnpm 11.5.0 (pinned in `packageManager`). Node.js 24 or newer is required. Every analysis starts from a chain ID and contract address, reads pinned on-chain state, and computes its graph and exposure units from those observations. No precomputed token results or editorial risk ratings ship in the app.
 
 ## Development
 
 ```sh
-npm install
-npm run dev
-npm run check
-npm test
-npm run build
+pnpm install
+pnpm dev
+pnpm check
+pnpm test
+pnpm build
 ```
 
-`server.mjs` serves the static `dist/` directory locally at port 4173. It has no discovery API. Source lives in `web/` and `discovery/`; esbuild bundles viem into the browser entry point. Build output is ignored by Git. Repository commits are unsigned (`commit.gpgsign=false` locally).
+`pnpm dev` runs the Vite development server on port 4173 with React Fast Refresh. `pnpm build` type-checks the app and creates the static `dist/` site; `pnpm preview` serves that build on port 4173. There is no discovery API or backend. React components live in `web/components/`, `web/App.tsx` manages the shell and local watchlist, and `web/discovery-state.ts` owns abortable lookup state through `useSyncExternalStore`. The discovery engine, RPC boundary, cache and exposure metric are TypeScript modules with shared models in `discovery/types.ts`. `pnpm format` formats the TypeScript source and configuration. Build output is ignored by Git. Repository commits are unsigned (`commit.gpgsign=false` locally).
 
 ## Live address lookups
 
@@ -27,7 +27,7 @@ The root page has no selected token or fabricated result. Existing `?chainId=...
 
 ### Network selection
 
-`discovery/chains.js` holds the 20 EVM mainnets selected by DefiLlama chain DeFi TVL on **2026-10-28**, in descending order. It is a dated network-selection snapshot, not a live TVL feed or token-risk result. Source: https://api.llama.fi/v2/chains and https://defillama.com/chains/evm.
+`discovery/chains.ts` holds the 20 EVM mainnets selected by DefiLlama chain DeFi TVL on **2026-10-28**, in descending order. It is a dated network-selection snapshot, not a live TVL feed or token-risk result. Source: https://api.llama.fi/v2/chains and https://defillama.com/chains/evm.
 
 1. Ethereum — 1
 2. Base — 8453
@@ -62,7 +62,7 @@ Independent L1s have their own network dependency. Configured L2s depend on Ethe
 
 ## Discovery
 
-`discovery/engine.js` implements bounded recursive adapters for:
+`discovery/engine.ts` implements bounded recursive adapters for:
 
 - ERC-4626 assets and conversions; Morpho/Yearn-style interfaces are detected without inventing strategy allocations.
 - V2 LP reserves and factory cross-references; concentrated-liquidity pool assets without inventing an NFT holding.
@@ -75,11 +75,11 @@ Interfaces are contract-reported observations, not deployment authentication or 
 
 Every observed mint/release authority stays relevant to all holders sharing the same supply or backing, independent of acquisition route. The engine does not claim that it discovers all such authorities. Reciprocal peers and Ethereum escrow are cross-checked before adding a backing edge.
 
-`discovery/rpc.js` validates chain identity, pins a finalized block when available (otherwise explicitly labels a latest block), enforces time/read/response limits and records calls. Source metadata is accepted only when pinned runtime bytecode matches; source matching is not a safety rating.
+`discovery/rpc.ts` validates chain identity, pins a finalized block when available (otherwise explicitly labels a latest block), enforces time/read/response limits and records calls. Source metadata is accepted only when pinned runtime bytecode matches; source matching is not a safety rating.
 
 ## Exposure units
 
-`web/exposure.js` computes Exposure Units v1.1: **1 EU per unique system × risk dimension**, equal weights. Shared dimensions count once. Dependencies accumulate as a union, cycles share a stage, and controls attach at the earliest dependent stage.
+`web/exposure.ts` computes Exposure Units v1.1: **1 EU per unique system × risk dimension**, equal weights. Shared dimensions count once. Dependencies accumulate as a union, cycles share a stage, and controls attach at the earliest dependent stage.
 
 EU measures discovered structural breadth, not severity, expected loss, loss probability or an investment ranking. Counts can understate exposure when discovery is incomplete. Verifier/signer quorums, audits and past incidents do not mechanically add or discount units.
 
@@ -87,7 +87,7 @@ The default chart shows the full cumulative exposure. The layer breakdown offers
 
 ## Browser storage
 
-`discovery/cache.js` uses IndexedDB:
+`discovery/cache.ts` uses IndexedDB:
 
 - Results: two-minute TTL, keyed by result schema version, chain and address.
 - Matched metadata: 24-hour TTL, keyed by chain/address/runtime code hash.
@@ -100,10 +100,10 @@ The separate result schema version invalidates older discovery graphs without bl
 
 ## Tests and deployment
 
-Tests cover recursion, cycles, deduplication, protocol cross-checks, source matching, chain identity, network parent relationships, cache behavior and bridge path accounting. Former curated models exist only in `tests/fixtures/` for regression tests and are excluded from the browser build.
+Tests cover recursion, cycles, deduplication, protocol cross-checks, source matching, chain identity, network parent relationships, cache behavior and bridge path accounting. Migration tests also cover superseded/aborted lookups, controller cleanup, stale refresh fallback, React rendering, safe token-text rendering, graph layout and project-path URL preservation. Former curated models exist only in `tests/fixtures/` for regression tests and are excluded from the browser build.
 
-The app is deployed to **https://vmaark.github.io/token-risk/** using `.github/workflows/pages.yml`. Pushes to `main` and manual workflow runs install locked dependencies, check the JavaScript, run tests, build `dist/`, and deploy that directory through GitHub Pages. Generated output stays out of Git. No deployment secrets or server are required.
+The app is deployed to **https://vmaark.github.io/token-risk/** using `.github/workflows/pages.yml`. Pushes to `main` and manual workflow runs install dependencies with `pnpm install --frozen-lockfile`, type-check TypeScript, run tests, build `dist/`, and deploy that directory through GitHub Pages. Generated output stays out of Git. No deployment secrets or server are required.
 
-GitHub Pages must use **GitHub Actions** as its publishing source in the repository's Pages settings. Relative asset URLs and query-based token links work under `/token-risk/` without a custom base-path build. The workflow uses Node.js 24 and release-pinned official GitHub Actions.
+GitHub Pages must use **GitHub Actions** as its publishing source in the repository's Pages settings. Vite uses the relative base `./`; hashed asset URLs and query-based token links work under `/token-risk/`. The workflow uses Node.js 24 and release-pinned official GitHub Actions.
 
 `.openai/hosting.json` is retained as a record of the previous Site deployment. It is not used by the GitHub Pages workflow.
