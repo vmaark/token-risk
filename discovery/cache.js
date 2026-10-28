@@ -9,7 +9,8 @@ export class BrowserCache {
  async set(key,value,ttl){try{if(JSON.stringify(value).length>4_000_000)return;const db=await this.db();await new Promise((resolve,reject)=>{const tx=db.transaction('entries','readwrite');const store=tx.objectStore('entries');const r=store.getAll();r.onsuccess=()=>{const entries=r.result.sort((a,b)=>b.savedAt-a.savedAt);for(const old of entries.slice(79))store.delete(old.key);store.put({key,value,savedAt:Date.now(),expiresAt:Date.now()+ttl,version:CACHE_VERSION});};tx.oncomplete=resolve;tx.onerror=()=>reject(tx.error);});}catch{this.available=false;}}
  async clear(){try{const db=await this.db();await new Promise((resolve,reject)=>{const t=db.transaction('entries','readwrite');t.objectStore('entries').clear();t.oncomplete=resolve;t.onerror=()=>reject(t.error);});return true;}catch{this.available=false;return false;}}
 }
-export const resultKey=(chain,address)=>`result:${CACHE_VERSION}:${chain}:${address.toLowerCase()}`;
+export const RESULT_SCHEMA_VERSION=5;
+export const resultKey=(chain,address)=>`result:${RESULT_SCHEMA_VERSION}:${CACHE_VERSION}:${chain}:${address.toLowerCase()}`;
 export async function cachedDiscovery(input,{cache,refresh=false,run}){
  const key=resultKey(input.chainId,input.address);
  if(!refresh){const hit=await cache.get(key);if(hit)return {...hit.value,cache:{status:'hit',savedAt:hit.savedAt,expiresAt:hit.expiresAt}};}

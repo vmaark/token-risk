@@ -1,92 +1,105 @@
 # Token Risk
 
-A browser-only EVM dependency explorer with a dark dashboard. Address discovery reads public JSON-RPC endpoints and Sourcify directly; no application server, wallet, or secret API key is required. A static bundle is published through Sites.
+A browser-only EVM token dependency explorer. Every analysis starts from a chain ID and contract address, reads pinned on-chain state, and computes its graph and exposure units from those observations. No precomputed token results or editorial risk ratings ship in the app.
 
-## Run
+## Development
 
 ```sh
-npm ci
+npm install
 npm run dev
-# http://127.0.0.1:4173
-npm test
 npm run check
+npm test
 npm run build
 ```
 
-`server.mjs` serves the built files locally. It contains no discovery API. Source lives in `web/` and `discovery/`; esbuild bundles viem into `dist/`.
+`server.mjs` serves the static `dist/` directory locally at port 4173. It has no discovery API. Source lives in `web/` and `discovery/`; esbuild bundles viem into the browser entry point. Build output is ignored by Git. Repository commits are unsigned (`commit.gpgsign=false` locally).
 
-## Live address discovery
+## Live address lookups
 
-Supported networks: Ethereum, Arbitrum, Base, Optimism. Identity is `(chainId, address)`, never a symbol. Every chain is checked against `eth_chainId`; reads use an independently pinned finalized block (or a labeled latest-block fallback). Cross-chain snapshots are not atomic.
+Select a network and paste a 20-byte EVM contract address. Four example shortcuts contain addresses only and invoke the same discovery engine:
 
-Adapters currently inspect:
+- rsETH on Arbitrum: recursive staking and observed bridge configurations.
+- sDAI on Ethereum: ERC-4626 share and underlying interfaces.
+- USDC/WETH V2 pair on Ethereum: factory registration and reserves.
+- Aave aWETH on Ethereum: reserve registration and underlying asset.
 
-- ERC-4626: immediate asset, totalAssets, share conversion; recognizes Morpho/Yearn interfaces but does not claim full strategy allocation coverage.
-- V2-style LPs: token0/token1, reserves and factory registration cross-check. Amounts are underlying units, not invented portfolio weights.
-- V3-style pools: factory/pool registration and asset pair. A pool address is not an NFT position; position-token discovery remains unsupported.
-- Aave V3-style deposit tokens: underlying and reserve aToken cross-check. Pool versions with incompatible reserve layouts remain unresolved.
-- Compound V2-style tokens: controller listing and reported cash, borrow and reserve accounting.
-- Balancer V2-style pools: Vault pool registration and token balances, excluding self-held BPT.
-- Lido wstETH/stETH and native ETH wrappers: distinct staking/network boundaries.
-- Kelp rsETH: config and deposit-pool cross-references, supported assets with nonzero protocol-reported deposits. AVSs, operators, minters, loss allocation and detailed custody remain incomplete.
-- LayerZero V2 OFTs/adapters: configured peers over a catalog of 186 known mainnet endpoint IDs; reciprocal Ethereum escrow; token escrow balance; incoming receive libraries, effective ULN configurations and applicable active grace-library configurations. Grace expiry is a **block number**, and only the application's or default timeout applies according to the selected receive library.
-- Privileged controls: EIP-1967 implementation, admin and beacon slots; owner/minter interfaces; multisig-style owners and threshold when readable.
+The root page has no selected token or fabricated result. Existing `?chainId=...&address=...` links run live discovery. Legacy `?asset=wsteth` and `?asset=steth` links resolve the real mainnet addresses; other retired curated links show the address entry state.
 
-Interface cross-checks do not authenticate a deployment or prove safety. Verified source is accepted only when Sourcify's on-chain runtime bytecode matches the pinned RPC bytecode hash. Other proxies, custom code, complete role histories, canonical bridges, Curve, NFT holdings, synthetic collateral and off-chain reserves need further adapters. An unmatched contract is unclassified, not assumed to be a base asset.
+### Network selection
 
-Live results include Exposure Units v1.1, a count of observed system/risk dimensions. Severity and loss probability remain unassessed. The graph distinguishes backing, bridge authority, governance, market and network dependencies. Every observed incoming mint/release path stays relevant regardless of a holder's acquisition route. Complete authority coverage is always marked partial. Contract-reported balances and accounting are not a cross-chain solvency proof; in-flight messages and liabilities are not reconciled.
+`discovery/chains.js` holds the 20 EVM mainnets selected by DefiLlama chain DeFi TVL on **2026-10-28**, in descending order. It is a dated network-selection snapshot, not a live TVL feed or token-risk result. Source: https://api.llama.fi/v2/chains and https://defillama.com/chains/evm.
 
-## Exposure Units v1.1 and chart
+1. Ethereum — 1
+2. Base — 8453
+3. BNB Smart Chain — 56
+4. HyperEVM — 999 (selected by Hyperliquid L1 TVL, which includes its other execution activity)
+5. Arbitrum One — 42161
+6. Robinhood Chain — 4663
+7. Monad — 143
+8. Polygon PoS — 137 (EVM sidechain with Ethereum checkpoint dependencies)
+9. Arc — 5042
+10. Avalanche — 43114
+11. Plasma — 9745
+12. OP Mainnet — 10
+13. Anubis — 6714
+14. Ink — 57073
+15. Flare — 14
+16. X Layer — 196
+17. Cronos — 25
+18. Mantle — 5000
+19. Tempo — 4217
+20. Gnosis — 100
 
-Both live and curated graphs use a shared, browser-side assessment model. One exposure unit (EU) is one unique system × risk dimension, with equal weight 1. It counts the discovered risk surface, not expected loss, loss probability, or a safety ranking. It applies no economic-value weights, quorum discounts, incident penalties or 0–100 normalization.
+RPC identities and batch-read support were checked for each network. Public endpoints can be unavailable or rate-limited. Anubis chain ID 6714 was verified through RPC and The Graph's network registry; older Anubis wallet documentation lists conflicting IDs. Network configuration uses viem's mainnet registry where available and published network documentation. Source references:
 
-The seven chart groups are network/cryptography, code, privileged controls, bridge verification, staking/restaking, markets/oracles and issuer/reserves. Distinct dimensions within a group each count once per system. The source module lists every mapping and inference rule. Live code points require an observed bytecode hash; privileged addresses and incoming bridge paths contribute observed dimensions. Contract-reported signer/DVN quorums remain evidence, with no automatic point discount. Detailed synthetic/off-chain backing is not inferred.
+- https://github.com/wevm/viem/tree/main/src/chains/definitions
+- https://robinhood.com/us/en/support/articles/robinhood-chain-mainnet/
+- https://docs.arc.io/arc/references/connect-to-arc
+- https://thegraph.com/docs/en/supported-networks/anubis/
+- https://docs.anubispace.org/anubis-chain/developers/json_rpc/json-rpc-endpoint/
 
-Shared dependencies count once across branches. Known Lido staking and Circle reserve facts have explicit shared identities to avoid duplicate accounting across their wrapper/reserve nodes. Each receiving bridge path is a separate message-verification boundary; an additionally accepted grace library adds a boundary. This does not treat paths or verifiers as statistically independent.
+Independent L1s have their own network dependency. Configured L2s depend on Ethereum; Polygon includes its Ethereum checkpoint dependency. Controls, consensus details and data availability are not comprehensively assessed by this configuration.
 
-Stacked columns show cumulative exposure from base dependencies to the token; Added per layer shows the incremental contribution. Side controls enter at their earliest dependent stage. Cyclic backing components are condensed into one stage. Explicit bridge/representation chart groups share one composition step while retaining separate graph nodes. Inherited bridge dimensions point to the canonical source node and count once; the Arbitrum wstETH example therefore has four chart stages and 11 EU, with 0 additional EU at the representation itself. Stages describe structural composition, not transfer history. Click a column to inspect the added systems, then select a system to open its inspector. Node badges and JSON exports include the same assessment and formula version.
+## Discovery
 
-Hatched caps indicate unquantified unknowns, with decorative height excluded from numeric totals. Evidence checks count only displayed checklist items; the fraction is not global risk-assessment completeness. A smaller discovered count can result from less adapter coverage. Curated labels remain explicitly marked editorial judgments and do not determine EU.
+`discovery/engine.js` implements bounded recursive adapters for:
 
-For the curated examples: native ETH = 2 EU; stETH = 7; wstETH = 8; the partial canonical Arbitrum wstETH scenario = 11. These are convention-based structural counts, not empirical risk estimates or directly comparable to live snapshots with different scope.
+- ERC-4626 assets and conversions; Morpho/Yearn-style interfaces are detected without inventing strategy allocations.
+- V2 LP reserves and factory cross-references; concentrated-liquidity pool assets without inventing an NFT holding.
+- Aave-style reserve registration, Compound-style listing/accounting and Balancer V2 Vault registration.
+- Lido wrappers and staking boundaries, and Kelp configuration cross-references and deposit accounting.
+- EIP-1967 proxy, admin and beacon observations, owner/minter controls, multisig and timelock interfaces.
+- LayerZero V2 observed incoming peers, receive libraries, verifier configurations and active grace policies.
 
-## Caching and limits
+Interfaces are contract-reported observations, not deployment authentication or solvency proofs. Unknown contracts remain unclassified. Protocol-specific configuration and known addresses are adapter inputs, never replacement analysis results. Detailed strategies, synthetic collateral, off-chain reserves, exhaustive role history, arbitrary bridge families and incident history remain incomplete.
 
-IndexedDB stores versioned results for two minutes and verified contract metadata for 24 hours, keyed by chain, address and current code hash. Refresh bypasses result caching. After a failed lookup an expired snapshot may be shown with an explicit stale label. Cancelled and interrupted scans do not replace a prior complete scan. Storage failure leaves live reads usable. Cache entries are bounded to 80, at most 4 MB each; Clear local cache removes them.
+Every observed mint/release authority stays relevant to all holders sharing the same supply or backing, independent of acquisition route. The engine does not claim that it discovers all such authorities. Reciprocal peers and Ethereum escrow are cross-checked before adding a backing edge.
 
-Discovery is bounded by four recursive edges, 32 inspected contract nodes, 1,400 logical RPC reads and a 90-second deadline. Calls are grouped in batches of 25. Storage and source lookups are also block-pinned where applicable. Public RPCs/registries see lookup traffic and can rate-limit or reject CORS requests. No credentials are stored. JSON exports (schema 3) contain pinned blocks, decoded observations, raw call results, errors, coverage and remaining unknowns.
+`discovery/rpc.js` validates chain identity, pins a finalized block when available (otherwise explicitly labels a latest block), enforces time/read/response limits and records calls. Source metadata is accepted only when pinned runtime bytecode matches; source matching is not a safety rating.
 
-## Curated research
+## Exposure units
 
-Name-based searches and example scenarios remain separately labeled curated research dated 27 October 2026, including the historical Kelp/LayerZero/Aave incident of 18 April 2026. The incident does not imply a current impairment or current one-DVN policy. Its escrow-release mechanism is distinct from minting mainnet rsETH; remote bridge backing and mainnet staking backing are separate accounting boundaries. No final haircut is asserted.
+`web/exposure.js` computes Exposure Units v1.1: **1 EU per unique system × risk dimension**, equal weights. Shared dimensions count once. Dependencies accumulate as a union, cycles share a stage, and controls attach at the earliest dependent stage.
 
-Curated qualitative labels use the maximum ordinal label among reachable modeled dependencies; they are not loss probabilities or L2BEAT/DefiLlama scores. The hypothetical LP uses an explicitly illustrative 50/50 allocation. The local watchlist, comparison and incident views apply to curated scenarios.
+EU measures discovered structural breadth, not severity, expected loss, loss probability or an investment ranking. Counts can understate exposure when discovery is incomplete. Verifier/signer quorums, audits and past incidents do not mechanically add or discount units.
 
-## Structure
+The default chart shows the full cumulative exposure. The layer breakdown offers cumulative and added-per-layer views. Evidence checks appear in **Evidence & coverage**, alongside pinned networks, RPC reads, relevant bridge observations and raw call logs. They describe a limited checklist, not overall risk-assessment coverage.
 
-- `discovery/rpc.js`: chain validation, block snapshots, bounded JSON responses, batching, call evidence and proxy constants.
-- `discovery/engine.js`: recursive graph and protocol adapters, source bytecode checks, bridge configurations.
-- `discovery/cache.js`: IndexedDB and result-cache policy.
-- `discovery/lz-catalog.json`: versioned LayerZero endpoint catalog with source/date.
-- `web/exposure.js`: versioned EU counting rules, shared-system deduplication, SCC stages and limited evidence checks.
-- `web/exposure-view.js`: stacked columns, per-stage inspection, node contributions and accessible data table.
-- `web/live.js`: live dashboard, progress/cancellation, dependency inspector, cache controls and evidence export.
-- `web/model.js`, `web/app.js`: curated graph model and shared application shell.
-- `tests/`: graph invariants, adapter cross-checks, reciprocal escrow, ULN decoding, cache expiry/refresh/stale behavior, bytecode matching and chain/block validation.
+## Browser storage
 
-## Sources
+`discovery/cache.js` uses IndexedDB:
 
-- [L2BEAT Arbitrum](https://l2beat.com/layer2s/projects/arbitrum)
-- [DefiLlama hacks](https://defillama.com/hacks)
-- [Sourcify V2 API](https://docs.sourcify.dev/docs/api/)
-- [ERC-4626](https://eips.ethereum.org/EIPS/eip-4626)
-- [Kelp contracts](https://github.com/Kelp-DAO/LRT-rsETH)
-- [LayerZero receive library implementation](https://github.com/LayerZero-Labs/LayerZero-v2/blob/main/packages/layerzero-v2/evm/protocol/contracts/MessageLibManager.sol)
-- [LayerZero ULN implementation](https://github.com/LayerZero-Labs/LayerZero-v2/blob/main/packages/layerzero-v2/evm/messagelib/contracts/uln/UlnBase.sol)
-- [LayerZero endpoint metadata](https://metadata.layerzero-api.com/v1/metadata)
-- [Aave V3 contracts](https://github.com/aave/aave-v3-origin)
-- [Balancer V2 interfaces](https://github.com/balancer/balancer-v2-monorepo/tree/master/pkg/interfaces)
-- [Compound V2 contracts](https://github.com/compound-finance/compound-protocol)
-- [Lido deployments](https://docs.lido.fi/deployed-contracts/)
-- [Aave rsETH incident report](https://governance.aave.com/t/rseth-incident-report-april-20-2026/24580)
-- [LayerZero Kelp incident report](https://layerzero.network/blog/layerzero-labs-kelpdao-incident-report)
+- Results: two-minute TTL, keyed by result schema version, chain and address.
+- Matched metadata: 24-hour TTL, keyed by chain/address/runtime code hash.
+- Up to 80 entries and a four-megabyte limit per entry.
+- Refresh bypasses result caching; expired fallback after failed reads is labeled.
+- Cancelled or interrupted scans never overwrite completed cached results.
+- Storage failure leaves live reads usable.
+
+The separate result schema version invalidates older discovery graphs without blocking on an IndexedDB upgrade in another open tab. The address watchlist stores chain/address pairs only in localStorage; it stores no precomputed analysis.
+
+## Tests and deployment
+
+Tests cover recursion, cycles, deduplication, protocol cross-checks, source matching, chain identity, network parent relationships, cache behavior and bridge path accounting. Former curated models exist only in `tests/fixtures/` for regression tests and are excluded from the browser build.
+
+`.openai/hosting.json` identifies the existing static Site. Build `dist/` before packaging; ignored build assets remain part of the deployment archive. The published Site keeps its existing private audience.

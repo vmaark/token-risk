@@ -6,7 +6,7 @@
   "scripts": {
     "dev": "npm run build && node server.mjs",
     "test": "node --test tests/*.test.mjs",
-    "check": "node --check web/app.js && node --check web/model.js && node --check web/live.js && node --check web/exposure.js && node --check web/exposure-view.js && node --check discovery/engine.js && node --check discovery/rpc.js",
+    "check": "node --check web/app.js && node --check web/live.js && node --check web/exposure.js && node --check web/exposure-view.js && node --check discovery/engine.js && node --check discovery/rpc.js && node --check discovery/chains.js",
     "build": "node scripts/build.mjs"
   },
   "dependencies": {

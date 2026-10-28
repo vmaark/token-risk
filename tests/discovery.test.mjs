@@ -55,3 +55,15 @@ test('Aave reserve cross-check rejects a different aToken and accepts matching r
 });
 test('Recursion boundary leaves an explicit unresolved dependency',async()=>{const session=new MockSession((c,a,s)=>rootMeta(a,s)||({asset:ok(a===A?B:C),totalAssets:ok(5n),convertToAssets:ok(1n)})[fn(s)]);const result=await new Discovery({session,maxDepth:0}).run({chainId:1,address:A});const child=result.nodes.find(n=>n.id===nodeId(1,B));assert.match(child.unknowns.join(' '),/Recursion limit/);assert.equal(result.edges.filter(e=>e.kind==='backing').length,1);});
 test('RPC read budget is enforced before issuing a batch',async()=>{let fetched=false;const s=new ReadSession({},async()=>{fetched=true;throw new Error('must not fetch');},{maxCalls:1});await assert.rejects(()=>s.rpc(1,[{method:'eth_chainId',params:[]},{method:'eth_chainId',params:[]}]),/budget/);assert.equal(fetched,false);});
+
+test('Independent EVM L1s do not inherit Ethereum; L2s and checkpoints retain their parent',()=>{
+ const l1=new Discovery({session:new MockSession(()=>fail)});l1.network({id:'token',chainId:56});
+ assert.deepEqual(l1.nodes.map(n=>n.id),['network:56']);
+ assert.ok(l1.nodes[0].unknowns.every(s=>!s.includes('sequencer')));
+ const l2=new Discovery({session:new MockSession(()=>fail)});l2.network({id:'token',chainId:8453});
+ assert.deepEqual(new Set(l2.nodes.map(n=>n.id)),new Set(['network:8453','network:1']));
+ assert.ok(l2.edges.some(e=>e.from==='network:8453'&&e.to==='network:1'));
+ const sidechain=new Discovery({session:new MockSession(()=>fail)});sidechain.network({id:'token',chainId:137});
+ assert.ok(sidechain.nodes.find(n=>n.id==='network:137').unknowns.some(s=>s.includes('checkpoint')));
+ assert.ok(sidechain.edges.some(e=>e.from==='network:137'&&e.to==='network:1'));
+});

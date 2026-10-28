@@ -1,11 +1,7 @@
 import { encodeFunctionData, decodeFunctionResult, parseAbi, keccak256 } from 'viem';
 export const ZERO='0x0000000000000000000000000000000000000000';
-export const CHAINS={
-  1:{id:1,name:'Ethereum',eid:30101,explorer:'https://etherscan.io',rpc:['https://ethereum-rpc.publicnode.com','https://1rpc.io/eth']},
-  42161:{id:42161,name:'Arbitrum',eid:30110,explorer:'https://arbiscan.io',rpc:['https://arb1.arbitrum.io/rpc','https://arbitrum-one-rpc.publicnode.com']},
-  8453:{id:8453,name:'Base',eid:30184,explorer:'https://basescan.org',rpc:['https://mainnet.base.org','https://base-rpc.publicnode.com']},
-  10:{id:10,name:'Optimism',eid:30111,explorer:'https://optimistic.etherscan.io',rpc:['https://mainnet.optimism.io','https://optimism-rpc.publicnode.com']},
-};
+import { CHAINS } from './chains.js';
+export { CHAINS } from './chains.js';
 export const isAddress=a=>typeof a==='string'&&/^0x[0-9a-fA-F]{40}$/.test(a);
 export const lower=a=>a.toLowerCase();
 export const nodeId=(chainId,address)=>`${chainId}:${lower(address)}`;
