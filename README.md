@@ -34,9 +34,9 @@ Adapters currently inspect:
 
 Interface cross-checks do not authenticate a deployment or prove safety. Verified source is accepted only when Sourcify's on-chain runtime bytecode matches the pinned RPC bytecode hash. Other proxies, custom code, complete role histories, canonical bridges, Curve, NFT holdings, synthetic collateral and off-chain reserves need further adapters. An unmatched contract is unclassified, not assumed to be a base asset.
 
-Live results include Exposure Units v1, a count of observed system/risk dimensions. Severity and loss probability remain unassessed. The graph distinguishes backing, bridge authority, governance, market and network dependencies. Every observed incoming mint/release path stays relevant regardless of a holder's acquisition route. Complete authority coverage is always marked partial. Contract-reported balances and accounting are not a cross-chain solvency proof; in-flight messages and liabilities are not reconciled.
+Live results include Exposure Units v1.1, a count of observed system/risk dimensions. Severity and loss probability remain unassessed. The graph distinguishes backing, bridge authority, governance, market and network dependencies. Every observed incoming mint/release path stays relevant regardless of a holder's acquisition route. Complete authority coverage is always marked partial. Contract-reported balances and accounting are not a cross-chain solvency proof; in-flight messages and liabilities are not reconciled.
 
-## Exposure Units v1 and chart
+## Exposure Units v1.1 and chart
 
 Both live and curated graphs use a shared, browser-side assessment model. One exposure unit (EU) is one unique system × risk dimension, with equal weight 1. It counts the discovered risk surface, not expected loss, loss probability, or a safety ranking. It applies no economic-value weights, quorum discounts, incident penalties or 0–100 normalization.
 
@@ -44,11 +44,11 @@ The seven chart groups are network/cryptography, code, privileged controls, brid
 
 Shared dependencies count once across branches. Known Lido staking and Circle reserve facts have explicit shared identities to avoid duplicate accounting across their wrapper/reserve nodes. Each receiving bridge path is a separate message-verification boundary; an additionally accepted grace library adds a boundary. This does not treat paths or verifiers as statistically independent.
 
-Stacked columns show cumulative exposure from base dependencies to the token; Added per layer shows the incremental contribution. Side controls enter at their earliest dependent stage. Cyclic backing components are condensed into one stage. Stages describe structural composition, not transfer history. Click a column to inspect the added systems, then select a system to open its inspector. Node badges and JSON exports include the same assessment and formula version.
+Stacked columns show cumulative exposure from base dependencies to the token; Added per layer shows the incremental contribution. Side controls enter at their earliest dependent stage. Cyclic backing components are condensed into one stage. Explicit bridge/representation chart groups share one composition step while retaining separate graph nodes. Inherited bridge dimensions point to the canonical source node and count once; the Arbitrum wstETH example therefore has four chart stages and 11 EU, with 0 additional EU at the representation itself. Stages describe structural composition, not transfer history. Click a column to inspect the added systems, then select a system to open its inspector. Node badges and JSON exports include the same assessment and formula version.
 
 Hatched caps indicate unquantified unknowns, with decorative height excluded from numeric totals. Evidence checks count only displayed checklist items; the fraction is not global risk-assessment completeness. A smaller discovered count can result from less adapter coverage. Curated labels remain explicitly marked editorial judgments and do not determine EU.
 
-For the curated examples: native ETH = 2 EU; stETH = 7; wstETH = 8; the partial canonical Arbitrum wstETH scenario = 12. These are convention-based structural counts, not empirical risk estimates or directly comparable to live snapshots with different scope.
+For the curated examples: native ETH = 2 EU; stETH = 7; wstETH = 8; the partial canonical Arbitrum wstETH scenario = 11. These are convention-based structural counts, not empirical risk estimates or directly comparable to live snapshots with different scope.
 
 ## Caching and limits
 
