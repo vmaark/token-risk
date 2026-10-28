@@ -1,10 +1,19 @@
-.DS_Store
+# Dependencies and generated output
 node_modules/
+dist/
+coverage/
+.cache/
+.vite/
+
+# Local Site tooling
 .sites-runtime/
 .sites-checkout/
+
+# Local environment and secrets
 .env
 .env.*
 !.env.example
-coverage/
 
-dist/
+# Logs and OS metadata
+*.log
+.DS_Store
