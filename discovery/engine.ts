@@ -827,14 +827,12 @@ export class Discovery {
     );
     const amounts = await this.session.batch<bigint>(
       1,
-      assets.value
-        .slice(0, 12)
-        .map((address) => ({
-          address: poolAddress,
-          signature:
-            "function getTotalAssetDeposits(address) view returns (uint256)",
-          args: [address],
-        })),
+      assets.value.slice(0, 12).map((address) => ({
+        address: poolAddress,
+        signature:
+          "function getTotalAssetDeposits(address) view returns (uint256)",
+        args: [address],
+      })),
     );
     for (const [i, a] of assets.value.slice(0, 12).entries()) {
       if (!amounts[i].ok) {
