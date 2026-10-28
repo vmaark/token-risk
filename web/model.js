@@ -17,7 +17,7 @@ export const sources = {
 // Supply domains are asset-wide trust relationships, independent of acquisition route.
 // Membership must be verified by contract/chain identity and backing, never by symbol.
 export const supplyDomains = {
-  sharedDemo: { id:'sharedDemo', label:'One token. Shared supply.', evidence:'Illustrative', members:['sharedtoken'], backing:'demobacking', authorities:['democanonical','demoexternal'], coverage:'complete-for-illustration' },
+  sharedDemo: { id:'sharedDemo', label:'Shared xETH supply and backing', evidence:'Illustrative', members:['sharedtoken'], backing:'demobacking', authorities:['democanonical','demoexternal'], coverage:'complete-for-illustration' },
   kelpRemoteHistorical: { id:'kelpRemoteHistorical', label:'Shared remote rsETH backing', evidence:'Historical report · April 2026', members:['l2rseth'], backing:'kelpescrow', authorities:['kelproute'], coverage:'partial-historical', note:'The report identifies shared bridge backing across remote chains. Ethereum rsETH backing and loss-allocation decisions are separate boundaries; this is not a current solvency assessment.' },
 };
 
@@ -57,7 +57,7 @@ export const scenarios = [
   {id:'usdc',symbol:'USDC',name:'USD Coin',category:'Fiat-backed stablecoin',chain:'ethereum',kind:'Curated token',root:'usdc',address:'0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48',edges:[['usdc','usd',1],['usdc','eth',1,'network']]},
   {id:'arbitrum',symbol:'wstETH',name:'Wrapped staked Ether on Arbitrum',category:'Bridged token',chain:'arbitrum',kind:'Route scenario',root:'arbwsteth',address:null,edges:[['arbwsteth','bridge',1],['bridge','wsteth',1],['wsteth','steth',1],['steth','eth',1]]},
   {id:'thirdparty',symbol:'Bridged ETH',name:'Third-party bridge example',category:'Bridge illustration',chain:'ethereum',displayChain:'Destination unspecified',kind:'Illustrative route',root:'bridgedeth',address:null,edges:[['bridgedeth','thirdparty',1],['thirdparty','eth',1]]},
-  {id:'shared',symbol:'xETH · shared supply',name:'Two bridges. One shared token.',category:'Supply integrity',chain:'arbitrum',displayChain:'Illustrative L2',kind:'Shared-supply demo',root:'sharedtoken',address:null,acquisitionRoute:'canonical',authorityCoverage:'complete-for-illustration',edges:[['demobacking','eth',1]]},
+  {id:'shared',symbol:'xETH · shared supply',name:'Shared token with two bridge authorities',category:'Supply integrity',chain:'arbitrum',displayChain:'Illustrative L2',kind:'Shared-supply demo',root:'sharedtoken',address:null,acquisitionRoute:'canonical',authorityCoverage:'complete-for-illustration',edges:[['demobacking','eth',1]]},
   {id:'kelp',symbol:'Aave / rsETH',name:'Kelp rsETH · April 2026',category:'Historical contagion',chain:'arbitrum',kind:'Historical case study',root:'aaverseth',address:null,authorityCoverage:'partial-historical',edges:[['aaverseth','l2rseth',1],['kelpescrow','rseth',1],['rseth','eth',1],['aaverseth','arbhistorical',1,'network']]},
 ];
 
@@ -67,7 +67,7 @@ export const incidents = [{
   kind:'Reserve / banking event', status:'Resolved per issuer report', source:'svb',
   description:'Circle reported $3.3B of USDC reserves held at Silicon Valley Bank. Following the depositor protection announcement, Circle said those reserves would be available and the depeg was closing. This was a reserve-access and market event, not a smart-contract exploit.',
   implication:'A position containing USDC inherits banking and redemption exposure even if its own smart contracts operate correctly.'
-},{id:'kelp-rseth-2026',date:'2026-04-18',affected:['aaverseth','l2rseth','kelpescrow','kelproute'],title:'Kelp rsETH → Aave contagion',kind:'Bridge backing / collateral event',status:'Historical · recovery not assessed',source:'layerzeroincident',sources:['layerzeroincident','aaveincident'],sourceLabel:'Read the incident report',description:'A forged message on a single-DVN path unlocked 116,500 rsETH (about $292M at the time) from Kelp’s bridge escrow. LayerZero reported compromised RPC infrastructure behind the attestation.',implication:'Aave’s report traces the collateral exposure and distinguishes remote escrow backing from mainnet staking backing. Loss allocation was scenario-dependent; no final recovery outcome is implied.'}];
+},{id:'kelp-rseth-2026',date:'2026-04-18',affected:['aaverseth','l2rseth','kelpescrow','kelproute'],title:'Kelp rsETH bridge incident and Aave exposure',kind:'Bridge backing / collateral event',status:'Historical · recovery not assessed',source:'layerzeroincident',sources:['layerzeroincident','aaveincident'],sourceLabel:'Read the incident report',description:'A forged message on a single-DVN path unlocked 116,500 rsETH (about $292M at the time) from Kelp’s bridge escrow. LayerZero reported compromised RPC infrastructure behind the attestation.',implication:'Aave’s report traces the collateral exposure and distinguishes remote escrow backing from mainnet staking backing. Loss allocation was scenario-dependent; no final recovery outcome is implied.'}];
 
 export function exposureEdges(scenario) {
   const edges=[...scenario.edges], seen=new Set(), signatures=new Set(edges.map(e=>e[0]+'|'+e[1]+'|'+(e[3]||'backing')));
