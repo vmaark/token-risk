@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {scenarios,nodes,collect,depth,riskFactors,riskLevel,lookup,validateAddress,relatedNodes,exposureEdges,authorityExposure,relevantIncidents} from '../dist/model.js';
+import {scenarios,nodes,collect,depth,riskFactors,riskLevel,lookup,validateAddress,relatedNodes,exposureEdges,authorityExposure,relevantIncidents} from '../web/model.js';
 const scenario=id=>scenarios.find(s=>s.id===id);
 test('LP recursively resolves wrapped staking and reserves; shared Ethereum is counted once',()=>{
  const result=collect(scenario('lp'));
@@ -54,7 +54,7 @@ test('every registered scenario references existing nodes and all nodes are reac
 });
 
 test('a historical reserve event is inherited by LP exposure and deduplicated',async()=>{
- const {relevantIncidents}=await import('../dist/model.js');
+ const {relevantIncidents}=await import('../web/model.js');
  assert.equal(relevantIncidents(scenario('lp')).length,1);
  assert.equal(relevantIncidents(scenario('usdc'))[0].id,'usdc-svb-2023');
  assert.equal(relevantIncidents(scenario('eth')).length,0);
@@ -106,7 +106,7 @@ test('supply-domain exposure is not inferred from token symbols or unrelated rou
 });
 
 test('an authority failure highlights dependent token holders and Aave, without inferring unrelated base-asset losses',async()=>{
- const {affectedDependents}=await import('../dist/model.js');
+ const {affectedDependents}=await import('../web/model.js');
  assert.deepEqual(affectedDependents(scenario('shared'),'demoexternal'),new Set(['demoexternal','demobacking','sharedtoken']));
  assert.deepEqual(affectedDependents(scenario('kelp'),'kelproute'),new Set(['kelproute','kelpescrow','l2rseth','aaverseth']));
  assert.equal(affectedDependents(scenario('kelp'),'kelproute').has('rseth'),false);
