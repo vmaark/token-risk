@@ -102,4 +102,8 @@ The separate result schema version invalidates older discovery graphs without bl
 
 Tests cover recursion, cycles, deduplication, protocol cross-checks, source matching, chain identity, network parent relationships, cache behavior and bridge path accounting. Former curated models exist only in `tests/fixtures/` for regression tests and are excluded from the browser build.
 
-`.openai/hosting.json` identifies the existing static Site. Build `dist/` before packaging; ignored build assets remain part of the deployment archive. The published Site keeps its existing private audience.
+The app is deployed to **https://vmaark.github.io/token-risk/** using `.github/workflows/pages.yml`. Pushes to `main` and manual workflow runs install locked dependencies, check the JavaScript, run tests, build `dist/`, and deploy that directory through GitHub Pages. Generated output stays out of Git. No deployment secrets or server are required.
+
+GitHub Pages must use **GitHub Actions** as its publishing source in the repository's Pages settings. Relative asset URLs and query-based token links work under `/token-risk/` without a custom base-path build. The workflow uses Node.js 24 and release-pinned official GitHub Actions.
+
+`.openai/hosting.json` is retained as a record of the previous Site deployment. It is not used by the GitHub Pages workflow.
